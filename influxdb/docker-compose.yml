@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  influxdb:
+    image: influxdb:1.8.10
+    container_name: relic-influxdb
+    ports:
+      - "8086:8086"
+      - "8083:8083"
+    volumes:
+      - ./influxdb_data:/var/lib/influxdb
+      - ./init.iql:/docker-entrypoint-initdb.d/init.iql
+    environment:
+      - INFLUXDB_DB=relic_monitor
+      - INFLUXDB_ADMIN_USER=admin
+      - INFLUXDB_ADMIN_PASSWORD=relic2026secure
+      - INFLUXDB_USER=writer
+      - INFLUXDB_USER_PASSWORD=writer_relic_2026
+      - INFLUXDB_READ_USER=reader
+      - INFLUXDB_READ_USER_PASSWORD=reader_relic_2026
+      - INFLUXDB_HTTP_AUTH_ENABLED=true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  chronograf:
+    image: chronograf:1.10.0
+    container_name: relic-chronograf
+    ports:
+      - "8888:8888"
+    volumes:
+      - ./chronograf_data:/var/lib/chronograf
+    environment:
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_USERNAME=admin
+      - INFLUXDB_PASSWORD=relic2026secure
+    depends_on:
+      - influxdb
+    restart: unless-stopped
