@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>古代骨角质文物埋藏腐蚀界面监测系统</title>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+<div id="app">
+    <header class="top-bar">
+        <div class="brand">
+            <div class="logo">𓁹</div>
+            <div class="title-block">
+                <h1>古代骨角质文物埋藏腐蚀界面监测系统</h1>
+                <div class="subtitle">Ancient Bone &amp; Horn Relic Burial Corrosion Interface Monitoring System &middot; 旧石器时代遗址 &middot; 500件文物 &middot; 130个LoRa电极</div>
+            </div>
+        </div>
+        <div class="status-bar">
+            <div class="status-item"><span class="dot ok"></span> InfluxDB: <span id="db-status">连接中</span></div>
+            <div class="status-item"><span class="dot ok"></span> LoRa: <span id="lora-status">在线</span></div>
+            <div class="status-item"><span id="clock">--:--:--</span></div>
+            <button id="refresh-btn" class="btn-refresh">⟳ 刷新</button>
+        </div>
+    </header>
+
+    <nav class="tabs">
+        <div class="tab active" data-tab="dashboard">综合仪表盘</div>
+        <div class="tab" data-tab="relic">文物3D点云</div>
+        <div class="tab" data-tab="contour">埋藏界面等高线</div>
+        <div class="tab" data-tab="grid">环境栅格</div>
+        <div class="tab" data-tab="analysis">腐蚀动力学分析</div>
+        <div class="tab" data-tab="alerts">告警管理</div>
+        <div class="tab" data-tab="sensors">传感器管理</div>
+    </nav>
+
+    <main>
+        <section class="tab-panel active" id="panel-dashboard">
+            <div class="stat-row">
+                <div class="stat-card">
+                    <div class="stat-icon ph">⚗</div>
+                    <div class="stat-info"><div class="label">平均pH</div><div class="value" id="avg-ph">--</div><div class="trend" id="avg-ph-trend">正常</div></div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon ca">Ca²⁺</div>
+                    <div class="stat-info"><div class="label">平均钙离子</div><div class="value" id="avg-ca">-- ppm</div><div class="trend" id="avg-ca-trend">正常</div></div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon orp">⚡</div>
+                    <div class="stat-info"><div class="label">平均ORP</div><div class="value" id="avg-orp">-- mV</div><div class="trend">土壤氧化还原</div></div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon relic">🦴</div>
+                    <div class="stat-info"><div class="label">文物总数</div><div class="value">500 件</div><div class="trend" id="at-risk">0 件受威胁</div></div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon alarm">⚠</div>
+                    <div class="stat-info"><div class="label">活跃告警</div><div class="value" id="active-alerts">0</div><div class="trend" id="alerts-trend">所有正常</div></div>
+                </div>
+            </div>
+
+            <div class="grid-2">
+                <div class="panel">
+                    <div class="panel-header">
+                        <h3>📊 环境参数趋势 (近24小时)</h3>
+                        <div class="panel-actions">
+                            <select id="trend-sensor" class="mini-select">
+                                <option value="PHR-001">pH电极 PHR-001</option>
+                                <option value="ORP-001">ORP电极 ORP-001</option>
+                                <option value="CA-001">钙离子电极 CA-001</option>
+                            </select>
+                        </div>
+                    </div>
+                    <canvas id="trend-chart" height="240"></canvas>
+                </div>
+                <div class="panel">
+                    <div class="panel-header"><h3>🧪 腐蚀深度分布 (Top20文物)</h3></div>
+                    <canvas id="corrosion-chart" height="240"></canvas>
+                </div>
+            </div>
+
+            <div class="grid-2">
+                <div class="panel">
+                    <div class="panel-header"><h3>🚨 最新告警</h3><a class="link" href="#" onclick="switchTab('alerts')">查看全部</a></div>
+                    <div class="alert-list" id="recent-alerts">
+                        <div class="empty-state">暂无告警记录</div>
+                    </div>
+                </div>
+                <div class="panel">
+                    <div class="panel-header"><h3>📍 电极分布 & 实时状态</h3>
+                        <div class="panel-actions">
+                            <span class="legend"><span class="lg-dot ph-ok"></span>pH正常</span>
+                            <span class="legend"><span class="lg-dot ca-ok"></span>Ca正常</span>
+                            <span class="legend"><span class="lg-dot warn"></span>告警中</span>
+                        </div>
+                    </div>
+                    <div id="sensors-map" class="sensors-map"></div>
+                </div>
+            </div>
+        </section>
+
+        <section class="tab-panel" id="panel-relic">
+            <div class="grid-2-unequal">
+                <div class="panel">
+                    <div class="panel-header">
+                        <h3>🔬 文物三维点云 & 腐蚀深度颜色映射</h3>
+                        <div class="panel-actions">
+                            <label>选择文物:
+                                <select id="relic-select" class="mini-select"></select>
+                            </label>
+                            <label>着色:
+                                <select id="color-mode" class="mini-select">
+                                    <option value="depth">腐蚀深度</option>
+                                    <option value="collagen">骨胶原降解度</option>
+                                    <option value="height">高度</option>
+                                </select>
+                            </label>
+                            <button id="reset-view" class="mini-btn">重置视角</button>
+                        </div>
+                    </div>
+                    <div id="three-container" class="three-container"></div>
+                    <div class="colorbar-wrap">
+                        <div class="colorbar" id="colorbar-depth"></div>
+                        <div class="colorbar-labels"><span>0 μm</span><span>100</span><span>200</span><span>300 μm</span></div>
+                        <div class="colorbar-title" id="colorbar-title">腐蚀深度</div>
+                    </div>
+                </div>
+                <div class="panel small">
+                    <div class="panel-header"><h3>📋 文物详情</h3></div>
+                    <div class="detail-block">
+                        <div class="detail-row"><span class="d-label">文物编号</span><span id="d-id" class="d-val">--</span></div>
+                        <div class="detail-row"><span class="d-label">名称/类别</span><span id="d-name" class="d-val">--</span></div>
+                        <div class="detail-row"><span class="d-label">出土位置</span><span id="d-grid" class="d-val">--</span></div>
+                        <div class="detail-row"><span class="d-label">埋藏深度</span><span id="d-depth" class="d-val">--</span></div>
+                        <div class="detail-row"><span class="d-label">出土日期</span><span id="d-date" class="d-val">--</span></div>
+                        <div class="detail-row"><span class="d-label">初始状况</span><span id="d-cond" class="d-val">--</span></div>
+                        <hr/>
+                        <h4 class="sub-header">当前腐蚀评估</h4>
+                        <div class="detail-row"><span class="d-label">平均腐蚀深度</span><span id="d-avg-depth" class="d-val val-warn">--</span></div>
+                        <div class="detail-row"><span class="d-label">最大腐蚀深度</span><span id="d-max-depth" class="d-val val-danger">--</span></div>
+                        <div class="detail-row"><span class="d-label">骨胶原降解率</span><span id="d-collagen" class="d-val">--</span></div>
+                        <div class="detail-row"><span class="d-label">钙磷比 Ca/P</span><span id="d-cap" class="d-val">--</span></div>
+                        <div class="detail-row"><span class="d-label">风险等级</span><span id="d-risk" class="d-val badge-risk LOW">LOW</span></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="tab-panel" id="panel-contour">
+            <div class="grid-2">
+                <div class="panel">
+                    <div class="panel-header">
+                        <h3>🗺 埋藏界面等高线图 (pH值分布)</h3>
+                        <div class="panel-actions">
+                            <label>图层:
+                                <select id="contour-layer" class="mini-select">
+                                    <option value="ph">pH值</option>
+                                    <option value="ca">钙离子浓度 (ppm)</option>
+                                    <option value="depth">腐蚀深度 (μm)</option>
+                                    <option value="collagen">胶原降解率 (%)</option>
+                                </select>
+                            </label>
+                            <label>时间窗:
+                                <select id="contour-window" class="mini-select">
+                                    <option value="1">近1小时</option>
+                                    <option value="24" selected>近24小时</option>
+                                    <option value="168">近7天</option>
+                                </select>
+                            </label>
+                        </div>
+                    </div>
+                    <canvas id="contour-canvas" width="700" height="600" class="contour-canvas"></canvas>
+                </div>
+                <div class="panel">
+                    <div class="panel-header"><h3>📈 横向剖面图 (Y=25处)</h3></div>
+                    <canvas id="section-chart" height="280"></canvas>
+                    <hr/>
+                    <div class="panel-header"><h3>🏺 文物风险分布</h3></div>
+                    <canvas id="risk-chart" height="240"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <section class="tab-panel" id="panel-grid">
+            <div class="grid-2">
+                <div class="panel">
+                    <div class="panel-header"><h3>🌡 pH栅格热图</h3></div>
+                    <canvas id="grid-ph-canvas" width="600" height="600" class="grid-canvas"></canvas>
+                </div>
+                <div class="panel">
+                    <div class="panel-header"><h3>💧 钙离子栅格热图</h3></div>
+                    <canvas id="grid-ca-canvas" width="600" height="600" class="grid-canvas"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <section class="tab-panel" id="panel-analysis">
+            <div class="grid-2">
+                <div class="panel">
+                    <div class="panel-header"><h3>🧬 骨胶原水解动力学模型 (Arrhenius + pH修正)</h3></div>
+                    <div class="form-row">
+                        <label>温度 T (℃)<input type="range" id="inp-temp" min="-10" max="50" value="18"/><span id="val-temp">18 ℃</span></label>
+                        <label>pH值<input type="range" id="inp-ph" min="3" max="10" step="0.1" value="6.5"/><span id="val-ph">6.5</span></label>
+                        <label>ORP (mV)<input type="range" id="inp-orp" min="-300" max="500" value="200"/><span id="val-orp">200 mV</span></label>
+                        <label>经历时间 (月)<input type="range" id="inp-months" min="1" max="120" value="12"/><span id="val-months">12 月</span></label>
+                    </div>
+                    <div class="result-row">
+                        <div class="result-box"><div class="r-label">速率常数 k</div><div class="r-value" id="out-k">--</div><div class="r-unit">s⁻¹</div></div>
+                        <div class="result-box"><div class="r-label">降解比例</div><div class="r-value" id="out-deg">--</div><div class="r-unit">%</div></div>
+                        <div class="result-box"><div class="r-label">腐蚀速率</div><div class="r-value" id="out-rate">--</div><div class="r-unit">μm/年</div></div>
+                        <div class="result-box"><div class="r-label">腐蚀深度</div><div class="r-value" id="out-depth">--</div><div class="r-unit">μm</div></div>
+                        <div class="result-box"><div class="r-label">钙磷比 (预测)</div><div class="r-value" id="out-cap">--</div><div class="r-unit">-</div></div>
+                    </div>
+                    <canvas id="arrhenius-chart" height="220"></canvas>
+                </div>
+                <div class="panel">
+                    <div class="panel-header"><h3>⚗ 钙磷溶出质量平衡 & 相图</h3></div>
+                    <canvas id="cap-chart" height="260"></canvas>
+                    <hr/>
+                    <h4 class="sub-header">参数说明</h4>
+                    <ul class="note-list">
+                        <li><b>Arrhenius模型</b>: k = A·exp(-Ea/RT) · f(pH) · f(Eh)，其中Ea≈85 kJ/mol，A≈1.2×10¹⁰ s⁻¹</li>
+                        <li><b>pH催化因子</b>: f(pH) = 1 + α[H⁺] + β[OH⁻]，酸性条件加速胶原肽键水解</li>
+                        <li><b>质量平衡</b>: Ca₁₀(PO₄)₆(OH)₂ + 8H⁺ → 10Ca²⁺ + 6H₂PO₄⁻ + 2H₂O，化学计量比Ca/P≈1.667</li>
+                        <li><b>溶度积</b>: pKsp≈57.0，pH每降1个单位，羟磷灰石溶解度升高约2~3个数量级</li>
+                        <li><b>风险阈值</b>: pH &lt; 5.5 或 Ca²⁺ &gt; 200 ppm 触发I级告警 (短信+钉钉推送)</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <section class="tab-panel" id="panel-alerts">
+            <div class="panel">
+                <div class="panel-header">
+                    <h3>🚨 告警管理中心</h3>
+                    <div class="panel-actions">
+                        <span id="alert-summary" class="badge-info">总计: 0 | 未处理: 0</span>
+                        <button id="ack-all" class="mini-btn">批量确认</button>
+                        <button id="resolve-all" class="mini-btn">批量恢复</button>
+                    </div>
+                </div>
+                <table class="alert-table">
+                    <thead>
+                        <tr>
+                            <th style="width:60px"><input type="checkbox" id="chk-all"/></th>
+                            <th>编号</th><th>类型</th><th>电极</th><th>阈值</th><th>实际值</th>
+                            <th>消息</th><th>通道</th><th>时间</th><th>状态</th><th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="alert-tbody"><tr><td colspan="11" class="empty-state">暂无告警数据</td></tr></tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="tab-panel" id="panel-sensors">
+            <div class="panel">
+                <div class="panel-header"><h3>📡 LoRa传感器管理 (130台)</h3></div>
+                <div class="stat-row small">
+                    <div class="stat-mini"><span class="dot ok"></span>pH电极 50</div>
+                    <div class="stat-mini"><span class="dot ok"></span>ORP电极 50</div>
+                    <div class="stat-mini"><span class="dot ok"></span>Ca²⁺电极 30</div>
+                    <div class="stat-mini">采集周期: 30分钟</div>
+                    <div class="stat-mini">协议: LoRaWAN Class A</div>
+                </div>
+                <table class="alert-table">
+                    <thead><tr>
+                        <th>编号</th><th>类型</th><th>坐标(X,Y)</th><th>深度</th>
+                        <th>安装日期</th><th>当前值</th><th>状态</th>
+                    </tr></thead>
+                    <tbody id="sensor-tbody"><tr><td colspan="7" class="empty-state">加载中...</td></tr></tbody>
+                </table>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <span>© 2026 文物保护科技实验室 &middot; 古代骨角质文物埋藏腐蚀界面监测平台</span>
+        <span class="footer-right">Rust Actix-Web + InfluxDB + Three.js · LoRa WSN v1.0</span>
+    </footer>
+</div>
+
+<script src="js/config.js"></script>
+    <script src="js/colormap.js"></script>
+    <script src="js/contour.js"></script>
+    <script src="js/CorrosionDepth.js"></script>
+    <script src="js/BoneCloud.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
