@@ -1,0 +1,19 @@
+[package]
+name = "lora-simulator"
+version = "1.0.0"
+edition = "2021"
+description = "LoRa电极数据模拟器 - 模拟pH/ORP/Ca2+传感器30分钟上报"
+
+[dependencies]
+reqwest = { version = "0.11", features = ["json", "blocking"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+rand = "0.8"
+clap = { version = "4.4", features = ["derive"] }
+log = "0.4"
+env_logger = "0.11"
+indicatif = "0.17"
+
+[profile.release]
+opt-level = 3
