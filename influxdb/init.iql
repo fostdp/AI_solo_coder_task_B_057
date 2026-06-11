@@ -1,0 +1,56 @@
+CREATE DATABASE "relic_monitor" WITH DURATION 365d REPLICATION 1 SHARD DURATION 7d NAME "autogen"
+
+CREATE RETENTION POLICY "forever" ON "relic_monitor" DURATION INF REPLICATION 1
+
+USE "relic_monitor"
+
+CREATE USER "admin" WITH PASSWORD 'relic2026secure' WITH ALL PRIVILEGES
+CREATE USER "writer" WITH PASSWORD 'writer_relic_2026'
+CREATE USER "reader" WITH PASSWORD 'reader_relic_2026'
+
+GRANT WRITE ON "relic_monitor" TO "writer"
+GRANT READ ON "relic_monitor" TO "reader"
+
+CREATE CONTINUOUS QUERY "cq_ph_1h" ON "relic_monitor"
+BEGIN
+  SELECT mean("value") AS "mean_ph", min("value") AS "min_ph", max("value") AS "max_ph"
+  INTO "forever"."ph_hourly"
+  FROM "sensor_data"
+  WHERE ("sensor_type" = 'pH')
+  GROUP BY time(1h), "sensor_id", "relic_id", "grid_x", "grid_y", "depth"
+END
+
+CREATE CONTINUOUS QUERY "cq_orp_1h" ON "relic_monitor"
+BEGIN
+  SELECT mean("value") AS "mean_orp", min("value") AS "min_orp", max("value") AS "max_orp"
+  INTO "forever"."orp_hourly"
+  FROM "sensor_data"
+  WHERE ("sensor_type" = 'ORP')
+  GROUP BY time(1h), "sensor_id", "relic_id", "grid_x", "grid_y", "depth"
+END
+
+CREATE CONTINUOUS QUERY "cq_ca_1h" ON "relic_monitor"
+BEGIN
+  SELECT mean("value") AS "mean_ca", min("value") AS "min_ca", max("value") AS "max_ca"
+  INTO "forever"."ca_hourly"
+  FROM "sensor_data"
+  WHERE ("sensor_type" = 'Ca2+')
+  GROUP BY time(1h), "sensor_id", "relic_id", "grid_x", "grid_y", "depth"
+END
+
+CREATE CONTINUOUS QUERY "cq_temp_1h" ON "relic_monitor"
+BEGIN
+  SELECT mean("value") AS "mean_temp", min("value") AS "min_temp", max("value") AS "max_temp"
+  INTO "forever"."temp_hourly"
+  FROM "sensor_data"
+  WHERE ("sensor_type" = 'Temp')
+  GROUP BY time(1h), "sensor_id", "relic_id", "grid_x", "grid_y", "depth"
+END
+
+CREATE CONTINUOUS QUERY "cq_corrosion_1d" ON "relic_monitor"
+BEGIN
+  SELECT mean("corrosion_rate") AS "mean_rate", mean("collagen_deg") AS "mean_collagen", mean("ca_p_ratio") AS "mean_cap"
+  INTO "forever"."corrosion_daily"
+  FROM "corrosion_analysis"
+  GROUP BY time(1d), "relic_id", "grid_x", "grid_y"
+END
