@@ -1,0 +1,61 @@
+[arrhenius]
+ea = 85000.0
+a_pre = 1.2e10
+r = 8.314
+ph_acid_coeff = 4.5e-4
+ph_base_coeff = 8.0e-5
+ph_neutral_point = 7.0
+
+[michaelis_menten]
+v_max = 3.5e-7
+km = 0.012
+enzyme_concentration = 1.0
+substrate_initial = 1.0
+enzyme_ea = 55000.0
+enzyme_a = 8.0e8
+ph_optimum = 6.8
+ph_range = 1.5
+temp_optimum_celsius = 37.0
+
+[calcium_phosphate]
+stoichiometric_ca_p = 1.667
+initial_bone_mass_g = 100.0
+mineral_fraction = 0.69
+organic_fraction = 0.22
+water_fraction = 0.09
+ca_in_hap_mass_frac = 0.3989
+p_in_hap_mass_frac = 0.1850
+solubility_constant_pksp = 57.0
+
+[alerts]
+ph_low_threshold = 5.5
+ca_high_threshold = 200.0
+orp_low_threshold = -200.0
+orp_high_threshold = 400.0
+temp_high_threshold = 35.0
+cooldown_seconds = 1800
+
+[ode_solver]
+rtol = 1.0e-6
+atol = 1.0e-10
+max_steps = 100000
+initial_dt = 0.01
+max_order = 5
+enforce_non_negative = true
+
+[lora_downlink]
+max_retries = 5
+retransmit_delay_ms = 5000
+ack_timeout_ms = 8000
+default_port = 100
+ack_port = 101
+
+[server]
+host = "0.0.0.0"
+port = 8080
+
+[influxdb]
+url = "http://127.0.0.1:8086"
+database = "relic_monitor"
+username = "writer"
+password = "writer_relic_2026"
