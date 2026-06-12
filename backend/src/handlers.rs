@@ -5,6 +5,11 @@ use crate::database::Database;
 use crate::alerts::AlertManager;
 use crate::algorithms;
 use crate::services::LoraIngestService;
+use crate::heritage_features::{
+    self,
+    TemperatureHistoryPoint,
+    MonteCarloParams,
+};
 use chrono::{Utc, Duration};
 use rand::Rng;
 use log::info;
@@ -519,6 +524,115 @@ pub async fn batch_enqueue_downlink(
     ))
 }
 
+#[derive(Debug, Deserialize)]
+pub struct EhPhDiagramRequest {
+    pub ph: f64,
+    pub eh_mv: f64,
+    pub ph_min: Option<f64>,
+    pub ph_max: Option<f64>,
+    pub eh_min: Option<f64>,
+    pub eh_max: Option<f64>,
+    pub grid_x: Option<usize>,
+    pub grid_y: Option<usize>,
+}
+
+#[post("/api/heritage/eh-ph-diagram")]
+pub async fn calculate_eh_ph_diagram(req: web::Json<EhPhDiagramRequest>) -> impl Responder {
+    let ph_range = (req.ph_min.unwrap_or(2.0), req.ph_max.unwrap_or(12.0));
+    let eh_range = (req.eh_min.unwrap_or(-500.0), req.eh_max.unwrap_or(800.0));
+    let grid_res = (req.grid_x.unwrap_or(20), req.grid_y.unwrap_or(20));
+
+    let result = heritage_features::generate_eh_ph_diagram(
+        req.ph, req.eh_mv, ph_range, eh_range, grid_res
+    );
+    HttpResponse::Ok().json(ApiResponse::ok(serde_json::json!(result),
+        &format!("Eh-pH相图生成成功，识别分带: {}", result.dominant_zone_name)))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CpiRequest {
+    pub activation_energy: Option<f64>,
+    pub burial_years: f64,
+    pub current_temp_c: f64,
+    pub temperature_history: Option<Vec<TemperatureHistoryPoint>>,
+    pub initial_collagen_fraction: Option<f64>,
+}
+
+#[post("/api/heritage/collagen-preservation-index")]
+pub async fn calculate_collagen_preservation_index(req: web::Json<CpiRequest>) -> impl Responder {
+    let ea = req.activation_energy.unwrap_or(85_000.0);
+    let init_frac = req.initial_collagen_fraction.unwrap_or(1.0);
+
+    let result = heritage_features::calculate_cpi(
+        ea,
+        req.burial_years,
+        req.current_temp_c,
+        req.temperature_history.clone(),
+        init_frac,
+    );
+    HttpResponse::Ok().json(ApiResponse::ok(serde_json::json!(result),
+        &format!("骨胶原保存潜力指数计算完成: CPI={:.1}, {}", result.cpi_score, result.cpi_grade)))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ExcavationOptimizationRequest {
+    #[serde(flatten)]
+    pub params: Option<MonteCarloParams>,
+    pub num_simulations: Option<usize>,
+    pub current_ph: Option<f64>,
+    pub current_temp_c: Option<f64>,
+    pub current_ca_ppm: Option<f64>,
+    pub current_orp_mv: Option<f64>,
+    pub forecast_years: Option<f64>,
+    pub target_corrosion_threshold_um: Option<f64>,
+    pub current_collagen_remaining_pct: Option<f64>,
+}
+
+#[post("/api/heritage/excavation-optimization")]
+pub async fn run_excavation_optimization(req: web::Json<ExcavationOptimizationRequest>) -> impl Responder {
+    let mut params = req.params.clone().unwrap_or_default();
+    if let Some(n) = req.num_simulations { params.num_simulations = n; }
+    if let Some(v) = req.current_ph { params.current_ph = v; }
+    if let Some(v) = req.current_temp_c { params.current_temp_c = v; }
+    if let Some(v) = req.current_ca_ppm { params.current_ca_ppm = v; }
+    if let Some(v) = req.current_orp_mv { params.current_orp_mv = v; }
+    if let Some(v) = req.forecast_years { params.forecast_years = v; }
+    if let Some(v) = req.target_corrosion_threshold_um { params.target_corrosion_threshold_um = v; }
+    if let Some(v) = req.current_collagen_remaining_pct { params.current_collagen_remaining_pct = v; }
+
+    let result = heritage_features::run_monte_carlo_excavation(params);
+    HttpResponse::Ok().json(ApiResponse::ok(serde_json::json!(result),
+        &format!("蒙特卡洛发掘优化完成 ({}次模拟), 置信度={:.0}%",
+            result.simulations_completed, result.confidence_level * 100.0)))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProtectionRecommendationRequest {
+    pub ph: f64,
+    pub ca_ppm: f64,
+    pub orp_mv: f64,
+    pub ambient_temp_c: Option<f64>,
+    pub ambient_rh_pct: Option<f64>,
+    pub burial_depth_m: Option<f64>,
+    pub relic_category: Option<String>,
+}
+
+#[post("/api/heritage/temporary-protection")]
+pub async fn recommend_temporary_protection_scheme(req: web::Json<ProtectionRecommendationRequest>) -> impl Responder {
+    let ambient_temp = req.ambient_temp_c.unwrap_or(22.0);
+    let ambient_rh = req.ambient_rh_pct.unwrap_or(55.0);
+    let burial_depth = req.burial_depth_m.unwrap_or(1.5);
+    let relic_category = req.relic_category.clone().unwrap_or_else(|| "人骨".to_string());
+
+    let result = heritage_features::recommend_temporary_protection(
+        req.ph, req.ca_ppm, req.orp_mv,
+        ambient_temp, ambient_rh, burial_depth, &relic_category
+    );
+    HttpResponse::Ok().json(ApiResponse::ok(serde_json::json!(result),
+        &format!("临时保护方案推荐完成: {} (有效度={:.0}%)",
+            result.primary_moisturizer_zh, result.expected_effectiveness_score)))
+}
+
 pub fn configure_routes(cfg: &mut web::ServiceConfig) {
     cfg
         .service(health)
@@ -544,5 +658,9 @@ pub fn configure_routes(cfg: &mut web::ServiceConfig) {
         .service(list_alerts)
         .service(active_alerts)
         .service(alert_action)
-        .service(stats_summary);
+        .service(stats_summary)
+        .service(calculate_eh_ph_diagram)
+        .service(calculate_collagen_preservation_index)
+        .service(run_excavation_optimization)
+        .service(recommend_temporary_protection_scheme);
 }
