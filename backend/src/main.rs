@@ -9,6 +9,7 @@ mod lora_gateway;
 mod handlers;
 mod config;
 mod services;
+mod heritage_features;
 
 use actix_web::{App, HttpServer, middleware, web};
 use actix_cors::Cors;
@@ -143,8 +144,6 @@ async fn main() -> io::Result<()> {
             .app_data(gw_data.clone())
             .app_data(config_data.clone())
             .app_data(ingest_data.clone())
-            .app_data(kinetics_data.clone())
-            .app_data(ca_data.clone())
             .app_data(alerter_svc_data.clone())
             .configure(handlers::configure_routes)
             .service(
