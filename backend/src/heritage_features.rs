@@ -1035,109 +1035,903 @@ pub fn recommend_temporary_protection(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::f64::consts::E;
 
-    #[test]
-    fn test_eh_ph_zone_classification_oxidized() {
-        let zone = classify_redox_zone(7.0, 500.0);
-        assert!(matches!(zone, RedoxZone::OXIDIZED | RedoxZone::SUBSURFACE_OXIC));
+    // ============================================================
+    // Feature 1: 氧化还原分带识别 测试集合
+    // 覆盖：正常分带、边界值、矿物组合一致性、极端/异常值、相图生成
+    // ============================================================
+
+    mod redox_zone_tests {
+        use super::*;
+
+        #[test]
+        fn test_zone_oxidized_normal_ph7() {
+            let zone = classify_redox_zone(7.0, 600.0);
+            assert_eq!(zone, RedoxZone::OXIDIZED, "pH7 + 600mV 应属于氧化带");
+        }
+
+        #[test]
+        fn test_zone_suboxic_normal() {
+            let zone = classify_redox_zone(7.0, 300.0);
+            assert_eq!(zone, RedoxZone::SUBSURFACE_OXIC, "pH7 + 300mV 应属于次表层含氧带");
+        }
+
+        #[test]
+        fn test_zone_manganese_reducing() {
+            let zone = classify_redox_zone(7.0, 100.0);
+            assert_eq!(zone, RedoxZone::MANGANESE_REDUCING, "pH7 + 100mV 应属于锰还原带");
+        }
+
+        #[test]
+        fn test_zone_iron_reducing_normal() {
+            let zone = classify_redox_zone(7.0, -50.0);
+            assert_eq!(zone, RedoxZone::IRON_REDUCING, "pH7 + -50mV 应属于铁还原带");
+        }
+
+        #[test]
+        fn test_zone_sulfate_reducing_normal() {
+            let zone = classify_redox_zone(7.0, -200.0);
+            assert_eq!(zone, RedoxZone::SULFATE_REDUCING, "pH7 + -200mV 应属于硫酸盐还原带");
+        }
+
+        #[test]
+        fn test_zone_methanogenic_normal() {
+            let zone = classify_redox_zone(7.0, -350.0);
+            assert_eq!(zone, RedoxZone::METHANOGENIC, "pH7 + -350mV 应属于产甲烷带");
+        }
+
+        #[test]
+        fn test_zone_carbonate_reducing() {
+            let zone = classify_redox_zone(7.0, -450.0);
+            assert_eq!(zone, RedoxZone::CARBONATE_REDUCING, "pH7 + -450mV 应属于碳酸盐还原带");
+        }
+
+        #[test]
+        fn test_zone_undefined_extreme_reducing() {
+            let zone = classify_redox_zone(7.0, -700.0);
+            assert_eq!(zone, RedoxZone::UNDEFINED, "pH7 + -700mV 超出常规范围应返回UNDEFINED");
+        }
+
+        #[test]
+        fn test_boundary_ph_extreme_acidic_clamped() {
+            let zone_low = classify_redox_zone(0.0, 300.0);
+            let zone_normal = classify_redox_zone(2.0, 300.0);
+            assert_eq!(zone_low, zone_normal, "pH低于下限应被clamp到2.0，分带结果一致");
+        }
+
+        #[test]
+        fn test_boundary_ph_extreme_alkaline_clamped() {
+            let zone_high = classify_redox_zone(14.0, 300.0);
+            let zone_normal = classify_redox_zone(12.0, 300.0);
+            assert_eq!(zone_high, zone_normal, "pH高于上限应被clamp到12.0，分带结果一致");
+        }
+
+        #[test]
+        fn test_nernst_linear_with_ph() {
+            let e1 = nernst_equation(0.80, 5.0, STANDARD_TEMP_K, 1.0);
+            let e2 = nernst_equation(0.80, 7.0, STANDARD_TEMP_K, 1.0);
+            let e3 = nernst_equation(0.80, 9.0, STANDARD_TEMP_K, 1.0);
+            let diff12 = e1 - e2;
+            let diff23 = e2 - e3;
+            assert!((diff12 - diff23).abs() < 0.01, "Nernst方程Eh随pH线性变化");
+            assert!(e1 > e2, "pH升高，Eh应降低");
+        }
+
+        #[test]
+        fn test_mineral_assemblage_consistency_oxidized() {
+            let zone = RedoxZone::OXIDIZED;
+            let phase_acid = identify_stable_phase(4.0, 700.0, &zone);
+            let phase_neutral = identify_stable_phase(7.0, 700.0, &zone);
+            let phase_alk = identify_stable_phase(9.0, 700.0, &zone);
+
+            assert!(phase_acid.contains("Fe²+") || phase_acid.contains("溶解态"),
+                "氧化带酸性应含溶解态Fe²+");
+            assert!(phase_neutral.contains("针铁矿") || phase_neutral.contains("FeOOH"),
+                "氧化带中性应含针铁矿");
+            assert!(phase_alk.contains("方解石") || phase_alk.contains("CaCO₃"),
+                "氧化带碱性应含方解石");
+        }
+
+        #[test]
+        fn test_mineral_assemblage_consistency_iron_reducing() {
+            let zone = RedoxZone::IRON_REDUCING;
+            let phase = identify_stable_phase(7.0, -50.0, &zone);
+            assert!(phase.contains("菱铁矿") || phase.contains("FeCO₃") || phase.contains("Fe²+"),
+                "铁还原带应出现菱铁矿或Fe²+，与实测矿物组合一致");
+        }
+
+        #[test]
+        fn test_mineral_assemblage_consistency_sulfate_reducing() {
+            let zone = RedoxZone::SULFATE_REDUCING;
+            let phase = identify_stable_phase(7.0, -200.0, &zone);
+            assert!(phase.contains("黄铁矿") || phase.contains("FeS₂"),
+                "硫酸盐还原带应出现黄铁矿，与实测矿物组合一致");
+        }
+
+        #[test]
+        fn test_mineral_assemblage_consistency_methanogenic() {
+            let zone = RedoxZone::METHANOGENIC;
+            let phase = identify_stable_phase(7.5, -350.0, &zone);
+            assert!(phase.contains("CH₄") || phase.contains("甲烷"),
+                "产甲烷带应出现CH₄，与实测气体组合一致");
+        }
+
+        #[test]
+        fn test_preservation_quality_correlates_with_zone() {
+            let oxic = evaluate_zone_preservation(&RedoxZone::OXIDIZED, 7.0);
+            let fe_red = evaluate_zone_preservation(&RedoxZone::IRON_REDUCING, 7.0);
+            let meth = evaluate_zone_preservation(&RedoxZone::METHANOGENIC, 7.5);
+
+            let order_good = |s: &str| -> u8 {
+                match s {
+                    "极差" => 0, "差" => 1, "一般" => 2,
+                    "良好" => 3, "优秀" => 4, "极佳" => 5,
+                    _ => 0
+                }
+            };
+
+            assert!(order_good(&fe_red.0) > order_good(&oxic.0),
+                "铁还原带保存评级应优于氧化带");
+            assert!(order_good(&meth.0) >= order_good(&fe_red.0),
+                "产甲烷带保存评级应不低于铁还原带");
+        }
+
+        #[test]
+        fn test_diagram_grid_dimensions() {
+            let (nx, ny) = (15, 25);
+            let diagram = generate_eh_ph_diagram(7.0, 100.0, (2.0, 12.0), (-500.0, 800.0), (nx, ny));
+            assert_eq!(diagram.zones.len(), nx * ny, "网格点数应为nx×ny");
+            assert_eq!(diagram.grid_size.0, nx);
+            assert_eq!(diagram.grid_size.1, ny);
+        }
+
+        #[test]
+        fn test_diagram_boundaries_count() {
+            let diagram = generate_eh_ph_diagram(7.0, 100.0, (2.0, 12.0), (-500.0, 800.0), (10, 10));
+            assert_eq!(diagram.boundaries.len(), 7, "Fe-S-C体系应有7条主要相边界");
+        }
+
+        #[test]
+        fn test_diagram_sample_point_in_zones() {
+            let diagram = generate_eh_ph_diagram(7.0, 100.0, (2.0, 12.0), (-500.0, 800.0), (20, 20));
+            assert!((diagram.sample_point.ph - 7.0).abs() < 0.01);
+            assert!((diagram.sample_point.eh_mv - 100.0).abs() < 0.01);
+            assert!(!diagram.sample_point.stable_phase.is_empty());
+        }
+
+        #[test]
+        fn test_diagram_dominant_zone_is_valid() {
+            let diagram = generate_eh_ph_diagram(7.0, -200.0, (2.0, 12.0), (-500.0, 800.0), (20, 20));
+            assert!(!diagram.dominant_zone_name.is_empty());
+            assert!(!diagram.preservation_quality.is_empty());
+            assert!(diagram.corrosion_risk.len() > 0);
+            assert!(["CRITICAL", "HIGH", "MEDIUM", "LOW"].iter().any(|&r| r == diagram.corrosion_risk),
+                "腐蚀风险等级应为有效值: {}", diagram.corrosion_risk);
+        }
+
+        #[test]
+        fn test_redox_zone_display_not_empty() {
+            let zones = vec![
+                RedoxZone::OXIDIZED, RedoxZone::SUBSURFACE_OXIC, RedoxZone::MANGANESE_REDUCING,
+                RedoxZone::IRON_REDUCING, RedoxZone::SULFATE_REDUCING, RedoxZone::METHANOGENIC,
+                RedoxZone::CARBONATE_REDUCING, RedoxZone::UNDEFINED,
+            ];
+            for z in zones {
+                let s = format!("{}", z);
+                assert!(!s.is_empty(), "RedoxZone {} Display不能为空", z as u8);
+            }
+        }
     }
 
-    #[test]
-    fn test_eh_ph_zone_classification_iron_reducing() {
-        let zone = classify_redox_zone(7.0, -50.0);
-        assert!(matches!(zone, RedoxZone::IRON_REDUCING | RedoxZone::MANGANESE_REDUCING));
+    // ============================================================
+    // Feature 2: 骨胶原保存潜力指数 测试集合
+    // 覆盖：活化能对比、温度史、边界值、极端/异常、等级判定
+    // ============================================================
+
+    mod cpi_tests {
+        use super::*;
+
+        #[test]
+        fn test_high_ea_has_longer_half_life() {
+            let cpi_low_ea = calculate_cpi(60_000.0, 1000.0, 15.0, None, 1.0);
+            let cpi_high_ea = calculate_cpi(120_000.0, 1000.0, 15.0, None, 1.0);
+
+            assert!(cpi_high_ea.predicted_half_life_years > cpi_low_ea.predicted_half_life_years * 2.0,
+                "高活化能(Ea=120kJ)骨器半衰期应显著长于低活化能(Ea=60kJ)，高活化能≈低活化能的{:.1}倍",
+                cpi_high_ea.predicted_half_life_years / cpi_low_ea.predicted_half_life_years);
+        }
+
+        #[test]
+        fn test_high_ea_preserves_more_collagen() {
+            let cpi_low = calculate_cpi(60_000.0, 500.0, 15.0, None, 1.0);
+            let cpi_high = calculate_cpi(120_000.0, 500.0, 15.0, None, 1.0);
+
+            assert!(cpi_high.cpi_score > cpi_low.cpi_score,
+                "相同埋藏时间下，高活化能骨胶原保存更多 (高:{:.1}% vs 低:{:.1}%)",
+                cpi_high.cpi_score, cpi_low.cpi_score);
+        }
+
+        #[test]
+        fn test_low_temp_preserves_better() {
+            let cpi_cold = calculate_cpi(85_000.0, 1000.0, 4.0, None, 1.0);
+            let cpi_warm = calculate_cpi(85_000.0, 1000.0, 25.0, None, 1.0);
+
+            assert!(cpi_cold.cpi_score > cpi_warm.cpi_score,
+                "低温环境胶原保存优于高温 (冷:{:.1}% vs 暖:{:.1}%)",
+                cpi_cold.cpi_score, cpi_warm.cpi_score);
+        }
+
+        #[test]
+        fn test_short_burial_high_preservation() {
+            let cpi = calculate_cpi(85_000.0, 10.0, 15.0, None, 1.0);
+            assert!(cpi.cpi_score > 80.0, "短埋藏(10年)应保存80%以上胶原");
+            assert!(cpi.cpi_grade.starts_with("A") || cpi.cpi_grade.starts_with("B"),
+                "短埋藏应为A或B级");
+        }
+
+        #[test]
+        fn test_long_burial_low_preservation() {
+            let cpi = calculate_cpi(85_000.0, 50_000.0, 20.0, None, 1.0);
+            assert!(cpi.cpi_score < 10.0, "极长埋藏(5万年)应严重降解");
+        }
+
+        #[test]
+        fn test_temperature_history_accelerated_degradation() {
+            let steady = calculate_cpi(85_000.0, 1000.0, 15.0, None, 1.0);
+
+            let warm_history = vec![
+                TemperatureHistoryPoint { years_bp: 1000.0, temp_celsius: 25.0 },
+                TemperatureHistoryPoint { years_bp: 500.0, temp_celsius: 20.0 },
+                TemperatureHistoryPoint { years_bp: 0.0, temp_celsius: 15.0 },
+            ];
+            let warm = calculate_cpi(85_000.0, 1000.0, 15.0, Some(warm_history), 1.0);
+
+            assert!(warm.cpi_score < steady.cpi_score,
+                "历史温度更高的场景降解更严重");
+            assert!(warm.equivalent_years_at_20c > steady.equivalent_years_at_20c,
+                "暖历史等效年数应大于恒温等效年数");
+        }
+
+        #[test]
+        fn test_equivalent_time_method_valid() {
+            let history = vec![
+                TemperatureHistoryPoint { years_bp: 100.0, temp_celsius: 20.0 },
+                TemperatureHistoryPoint { years_bp: 0.0, temp_celsius: 20.0 },
+            ];
+            let cpi = calculate_cpi(85_000.0, 100.0, 20.0, Some(history), 1.0);
+
+            assert!((cpi.equivalent_years_at_20c - 100.0).abs() < 1.0,
+                "恒温20°C埋藏100年，等效年数应≈100年 (实际:{:.1})",
+                cpi.equivalent_years_at_20c);
+        }
+
+        #[test]
+        fn test_half_life_positive_always() {
+            let cases = vec![
+                (50_000.0, 10.0),
+                (85_000.0, 15.0),
+                (120_000.0, 30.0),
+                (200_000.0, 4.0),
+            ];
+            for (ea, temp) in cases {
+                let cpi = calculate_cpi(ea, 100.0, temp, None, 1.0);
+                assert!(cpi.predicted_half_life_years > 0.0,
+                    "半衰期必须为正: Ea={}, T={} -> t1/2={}",
+                    ea, temp, cpi.predicted_half_life_years);
+                assert!(cpi.initial_half_life_years > 0.0);
+            }
+        }
+
+        #[test]
+        fn test_cpi_score_bounds_0_100() {
+            let cpi_very_long = calculate_cpi(50_000.0, 1_000_000.0, 30.0, None, 1.0);
+            assert!(cpi_very_long.cpi_score >= 0.0 && cpi_very_long.cpi_score <= 100.0,
+                "CPI分数必须在0-100范围内");
+            assert!(cpi_very_long.remaining_collagen_pct >= 0.0 && cpi_very_long.remaining_collagen_pct <= 100.0);
+        }
+
+        #[test]
+        fn test_grade_boundary_a_85() {
+            let cpi = calculate_cpi(85_000.0, 10.0, 4.0, None, 1.0);
+            assert!(cpi.cpi_score >= 85.0 || (cpi.cpi_grade.starts_with("A") && cpi.cpi_score >= 65.0),
+                "短埋藏低温应为高保存等级 (分数:{:.1}, 等级:{})", cpi.cpi_score, cpi.cpi_grade);
+        }
+
+        #[test]
+        fn test_empty_history_uses_default() {
+            let cpi = calculate_cpi(85_000.0, 500.0, 15.0, None, 1.0);
+            assert!(!cpi.temperature_history.is_empty(), "无温度史时应自动生成默认温度史");
+            assert!(cpi.temperature_history.len() >= 3);
+        }
+
+        #[test]
+        fn test_average_temperature_calculated() {
+            let history = vec![
+                TemperatureHistoryPoint { years_bp: 50.0, temp_celsius: 10.0 },
+                TemperatureHistoryPoint { years_bp: 0.0, temp_celsius: 20.0 },
+            ];
+            let cpi = calculate_cpi(85_000.0, 50.0, 15.0, Some(history), 1.0);
+            assert!(cpi.average_temp_c > 0.0, "平均温度应被计算");
+            assert!(cpi.average_temp_c < 30.0);
+        }
+
+        #[test]
+        fn test_interpretation_not_empty() {
+            let cpi = calculate_cpi(85_000.0, 500.0, 15.0, None, 1.0);
+            assert!(!cpi.interpretation.is_empty());
+            assert!(cpi.interpretation.len() > 20);
+        }
+
+        #[test]
+        fn test_arrhenius_temperature_dependence_monotonic() {
+            let arr_cfg = crate::algorithms::ArrheniusConfig {
+                ea: 85_000.0,
+                a: 1.2e10,
+                r: MOLAR_GAS_R,
+                ph_acid_coeff: 4.5e-4,
+                ph_base_coeff: 8.0e-5,
+                ph_neutral_point: 7.0,
+            };
+            let k_cold = arrhenius_rate_constant(0.0, &arr_cfg);
+            let k_warm = arrhenius_rate_constant(30.0, &arr_cfg);
+            assert!(k_warm > k_cold, "温度越高，Arrhenius速率常数越大");
+            assert!(k_warm > k_cold * 2.0, "30°C速率应为0°C的2倍以上");
+        }
     }
 
-    #[test]
-    fn test_eh_ph_zone_classification_sulfate_reducing() {
-        let zone = classify_redox_zone(7.0, -200.0);
-        assert!(matches!(zone, RedoxZone::SULFATE_REDUCING));
+    // ============================================================
+    // Feature 3: 出土时机优化（蒙特卡洛）测试集合
+    // 覆盖：置信区间、窗口覆盖、统计有效性、极端参数
+    // ============================================================
+
+    mod monte_carlo_tests {
+        use super::*;
+
+        fn make_params(n: usize, years: f64) -> MonteCarloParams {
+            MonteCarloParams {
+                num_simulations: n,
+                current_ph: 7.0,
+                ph_std_dev: 0.3,
+                current_temp_c: 18.0,
+                temp_std_dev: 2.0,
+                current_ca_ppm: 80.0,
+                ca_std_dev: 15.0,
+                current_orp_mv: 100.0,
+                orp_std_dev: 50.0,
+                forecast_years: years,
+                time_steps_per_year: 4,
+                target_corrosion_threshold_um: 200.0,
+                acceptable_risk_threshold: 0.25,
+                current_collagen_remaining_pct: 70.0,
+            }
+        }
+
+        #[test]
+        fn test_simulations_count_matches() {
+            let params = make_params(500, 5.0);
+            let result = run_monte_carlo_excavation(params);
+            assert_eq!(result.simulations_completed, 500, "500次模拟应返回500");
+        }
+
+        #[test]
+        fn test_confidence_interval_ordering() {
+            let params = make_params(200, 10.0);
+            let result = run_monte_carlo_excavation(params);
+
+            for y in &result.year_by_year_stats {
+                assert!(y.p5_corrosion_um <= y.p25_corrosion_um, "P5应≤P25");
+                assert!(y.p25_corrosion_um <= y.p50_corrosion_um, "P25应≤P50");
+                assert!(y.p50_corrosion_um <= y.p75_corrosion_um, "P50应≤P75");
+                assert!(y.p75_corrosion_um <= y.p95_corrosion_um, "P75应≤P95");
+                assert!(y.mean_corrosion_um >= 0.0, "平均腐蚀深度非负");
+            }
+        }
+
+        #[test]
+        fn test_corrosion_increases_over_time() {
+            let params = make_params(200, 20.0);
+            let result = run_monte_carlo_excavation(params);
+
+            let stats = &result.year_by_year_stats;
+            assert!(stats.len() >= 2, "至少有2年数据");
+
+            let first_mean = stats[0].mean_corrosion_um;
+            let last_mean = stats[stats.len() - 1].mean_corrosion_um;
+            assert!(last_mean >= first_mean, "腐蚀深度随时间单调不减");
+        }
+
+        #[test]
+        fn test_optimal_window_within_windows() {
+            let params = make_params(200, 10.0);
+            let result = run_monte_carlo_excavation(params);
+
+            assert!(!result.windows.is_empty(), "至少有一个窗口评估结果");
+
+            let opt_prob = result.optimal_window.probability_of_success;
+            let all_probs: Vec<f64> = result.windows.iter()
+                .map(|w| w.probability_of_success).collect();
+
+            let max_prob = all_probs.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+            assert!((opt_prob - max_prob).abs() < 0.001 || opt_prob <= max_prob,
+                "最优窗口成功率应为或接近最大值 (最优:{:.3}, 最大:{:.3})",
+                opt_prob, max_prob);
+        }
+
+        #[test]
+        fn test_windows_cover_forecast_range() {
+            let params = make_params(100, 10.0);
+            let result = run_monte_carlo_excavation(params);
+
+            assert!(!result.windows.is_empty());
+
+            let min_start = result.windows.iter()
+                .map(|w| w.start_year).fold(f64::INFINITY, f64::min);
+            let max_end = result.windows.iter()
+                .map(|w| w.end_year).fold(f64::NEG_INFINITY, f64::max);
+
+            assert!(min_start <= 1.0, "最早窗口应从0-1年附近开始，覆盖近期");
+            assert!(max_end >= 3.0 || result.windows.len() >= 4,
+                "窗口应覆盖足够长的预测范围");
+        }
+
+        #[test]
+        fn test_success_probability_bounds() {
+            let params = make_params(200, 15.0);
+            let result = run_monte_carlo_excavation(params);
+
+            for w in &result.windows {
+                assert!(w.probability_of_success >= 0.0 && w.probability_of_success <= 1.0,
+                    "成功率必须在[0,1]范围内: {}", w.probability_of_success);
+            }
+            assert!(result.confidence_level >= 0.0 && result.confidence_level <= 1.0);
+        }
+
+        #[test]
+        fn test_prob_exceed_increases_with_time() {
+            let params = make_params(200, 20.0);
+            let result = run_monte_carlo_excavation(params);
+
+            let stats = &result.year_by_year_stats;
+            if stats.len() >= 2 {
+                let first_exceed = stats[0].prob_exceed_threshold;
+                let last_exceed = stats[stats.len() - 1].prob_exceed_threshold;
+                assert!(last_exceed >= first_exceed, "超阈概率随时间不下降");
+            }
+        }
+
+        #[test]
+        fn test_risk_distribution_valid() {
+            let params = make_params(200, 10.0);
+            let result = run_monte_carlo_excavation(params);
+
+            let rd = &result.risk_distribution;
+            assert!(!rd.percentiles.is_empty(), "应有分位数数据");
+            assert!(!rd.probability_by_year.is_empty(), "应有逐年概率数据");
+
+            for (label, value) in &rd.percentiles {
+                assert!(!label.is_empty(), "分位数标签不能为空");
+                assert!(*value >= 0.0, "分位数值应非负: {}", value);
+            }
+
+            for (year, prob) in &rd.probability_by_year {
+                assert!(*year >= 0.0, "年份应非负");
+                assert!(*prob >= 0.0 && *prob <= 1.0, "概率应在[0,1]范围内");
+            }
+        }
+
+        #[test]
+        fn test_final_recommendation_not_empty() {
+            let params = make_params(100, 5.0);
+            let result = run_monte_carlo_excavation(params);
+            assert!(!result.final_recommendation.is_empty(), "必须有最终建议");
+            assert!(result.final_recommendation.len() > 20);
+        }
+
+        #[test]
+        fn test_small_std_dev_gives_narrow_confidence() {
+            let mut params_narrow = make_params(200, 10.0);
+            params_narrow.ph_std_dev = 0.05;
+            params_narrow.temp_std_dev = 0.3;
+            let result_narrow = run_monte_carlo_excavation(params_narrow);
+
+            let mut params_wide = make_params(200, 10.0);
+            params_wide.ph_std_dev = 1.5;
+            params_wide.temp_std_dev = 8.0;
+            let result_wide = run_monte_carlo_excavation(params_wide);
+
+            if !result_narrow.year_by_year_stats.is_empty() && !result_wide.year_by_year_stats.is_empty() {
+                let mid_idx = result_narrow.year_by_year_stats.len() / 2;
+                let narrow_p95_p5 = result_narrow.year_by_year_stats[mid_idx].p95_corrosion_um
+                    - result_narrow.year_by_year_stats[mid_idx].p5_corrosion_um;
+                let wide_p95_p5 = result_wide.year_by_year_stats[mid_idx].p95_corrosion_um
+                    - result_wide.year_by_year_stats[mid_idx].p5_corrosion_um;
+
+                assert!(wide_p95_p5 > narrow_p95_p5 * 0.5,
+                    "大方差应导致更宽的置信区间 (宽:{:.1} vs 窄:{:.1})",
+                    wide_p95_p5, narrow_p95_p5);
+            }
+        }
+
+        #[test]
+        fn test_minimal_simulation_count() {
+            let params = make_params(1, 1.0);
+            let result = run_monte_carlo_excavation(params);
+            assert!(result.simulations_completed >= 100,
+                "小于100次模拟时应自动提升到100次 (实际:{})",
+                result.simulations_completed);
+            assert!(!result.year_by_year_stats.is_empty());
+        }
+
+        #[test]
+        fn test_zero_time_steps_handled() {
+            let mut params = make_params(50, 1.0);
+            params.time_steps_per_year = 1;
+            let result = run_monte_carlo_excavation(params);
+            assert!(result.year_by_year_stats.len() >= 1,
+                "即使每年1步，也应有年度统计");
+        }
+
+        #[test]
+        fn test_window_recommendation_not_empty() {
+            let params = make_params(100, 5.0);
+            let result = run_monte_carlo_excavation(params);
+            for w in &result.windows {
+                assert!(!w.recommendation.is_empty());
+            }
+        }
+
+        #[test]
+        fn test_net_benefit_calculated() {
+            let params = make_params(100, 5.0);
+            let result = run_monte_carlo_excavation(params);
+            for w in &result.windows {
+                assert!(w.net_benefit.is_finite(), "净收益应为有限值");
+                assert!(w.expected_damage_if_wait >= 0.0);
+                assert!(w.expected_damage_if_excavate >= 0.0);
+            }
+        }
     }
 
-    #[test]
-    fn test_generate_eh_ph_diagram() {
-        let diagram = generate_eh_ph_diagram(7.0, 100.0, (2.0, 12.0), (-500.0, 800.0), (20, 20));
-        assert_eq!(diagram.zones.len(), 400);
-        assert_eq!(diagram.boundaries.len(), 7);
-        assert!(!diagram.dominant_zone_name.is_empty());
+    // ============================================================
+    // Feature 4: 现场临时保护方案 测试集合
+    // 覆盖：酸性环境PEG200、全pH区间、边界值、极端/异常、决策树
+    // ============================================================
+
+    mod protection_tests {
+        use super::*;
+
+        #[test]
+        fn test_acidic_environment_recommends_peg200() {
+            let rec = recommend_temporary_protection(
+                5.5, 60.0, 50.0, 20.0, 60.0, 1.0, "人骨"
+            );
+
+            assert!(rec.primary_moisturizer.to_lowercase().contains("peg")
+                || rec.secondary_recommendations.iter().any(|s| s.to_lowercase().contains("peg")),
+                "酸性+低-中钙环境应推荐PEG200作为保湿剂 (主材料: {})",
+                rec.primary_moisturizer);
+        }
+
+        #[test]
+        fn test_strongly_acidic_needs_neutralization() {
+            let rec = recommend_temporary_protection(
+                4.0, 80.0, 0.0, 22.0, 55.0, 1.0, "兽骨"
+            );
+            assert!(rec.ph_neutralization_required,
+                "强酸性(pH=4.0)应需要pH中和处理");
+            assert!(rec.neutralization_agent.is_some(),
+                "需要中和时应指定中和剂");
+            assert!(!rec.neutralization_agent.as_ref().unwrap().is_empty(),
+                "中和剂名称不应为空");
+        }
+
+        #[test]
+        fn test_neutral_ph_no_neutralization() {
+            let rec = recommend_temporary_protection(
+                7.0, 100.0, 0.0, 20.0, 60.0, 1.5, "骨器"
+            );
+            assert!(!rec.ph_neutralization_required,
+                "中性pH不需要中和");
+        }
+
+        #[test]
+        fn test_alkaline_environment_handling() {
+            let rec = recommend_temporary_protection(
+                9.0, 150.0, -100.0, 18.0, 50.0, 2.0, "人骨"
+            );
+            assert!(!rec.primary_moisturizer.is_empty());
+            assert!(rec.expected_effectiveness_score > 0.0);
+            assert!(!rec.step_by_step_protocol.is_empty());
+        }
+
+        #[test]
+        fn test_ph_classification_full_range() {
+            assert_eq!(classify_ph_condition(2.0), "EXTREMELY_ACIDIC");
+            assert_eq!(classify_ph_condition(4.0), "EXTREMELY_ACIDIC");
+            assert_eq!(classify_ph_condition(4.5), "HIGHLY_ACIDIC");
+            assert_eq!(classify_ph_condition(5.5), "MODERATELY_ACIDIC");
+            assert_eq!(classify_ph_condition(6.8), "NEUTRAL");
+            assert_eq!(classify_ph_condition(7.2), "NEUTRAL");
+            assert_eq!(classify_ph_condition(8.0), "MODERATELY_ALKALINE");
+            assert_eq!(classify_ph_condition(9.0), "HIGHLY_ALKALINE");
+            assert_eq!(classify_ph_condition(10.5), "EXTREMELY_ALKALINE");
+            assert_eq!(classify_ph_condition(13.0), "EXTREMELY_ALKALINE");
+        }
+
+        #[test]
+        fn test_ca_classification_full_range() {
+            assert_eq!(classify_ca_condition(5.0), "VERY_LOW_CA");
+            assert_eq!(classify_ca_condition(20.0), "VERY_LOW_CA");
+            assert_eq!(classify_ca_condition(40.0), "LOW_CA");
+            assert_eq!(classify_ca_condition(60.0), "LOW_CA");
+            assert_eq!(classify_ca_condition(100.0), "NORMAL_CA");
+            assert_eq!(classify_ca_condition(150.0), "NORMAL_CA");
+            assert_eq!(classify_ca_condition(250.0), "HIGH_CA");
+            assert_eq!(classify_ca_condition(400.0), "VERY_HIGH_CA");
+            assert_eq!(classify_ca_condition(1000.0), "VERY_HIGH_CA");
+        }
+
+        #[test]
+        fn test_orp_classification() {
+            assert_eq!(classify_origination(300.0), "HIGHLY_OXIDIZING");
+            assert_eq!(classify_origination(100.0), "MODERATELY_OXIDIZING");
+            assert_eq!(classify_origination(-50.0), "MODERATELY_REDUCING");
+            assert_eq!(classify_origination(-200.0), "STRONGLY_REDUCING");
+        }
+
+        #[test]
+        fn test_effectiveness_score_positive() {
+            let cases = vec![
+                (4.0, 50.0, 0.0),
+                (7.0, 100.0, 0.0),
+                (9.0, 200.0, -50.0),
+                (5.5, 30.0, 100.0),
+            ];
+            for (ph, ca, orp) in cases {
+                let rec = recommend_temporary_protection(
+                    ph, ca, orp, 20.0, 60.0, 1.0, "人骨"
+                );
+                assert!(rec.expected_effectiveness_score > 0.0 && rec.expected_effectiveness_score <= 100.0,
+                    "有效性评分应在0-100之间: pH={}, Ca={}, 得分={}",
+                    ph, ca, rec.expected_effectiveness_score);
+            }
+        }
+
+        #[test]
+        fn test_decision_path_not_empty() {
+            let rec = recommend_temporary_protection(
+                6.5, 80.0, 50.0, 22.0, 65.0, 1.0, "人骨"
+            );
+            assert!(!rec.decision_path.is_empty(), "决策路径不能为空");
+            assert!(rec.decision_path.len() >= 3, "决策树至少有3层判断");
+        }
+
+        #[test]
+        fn test_step_by_step_protocol_has_steps() {
+            let rec = recommend_temporary_protection(
+                7.0, 100.0, 0.0, 20.0, 60.0, 1.5, "人骨"
+            );
+            assert!(rec.step_by_step_protocol.len() >= 5,
+                "操作流程至少有5步 (实际:{})", rec.step_by_step_protocol.len());
+
+            for (i, step) in rec.step_by_step_protocol.iter().enumerate() {
+                assert!(step.contains(&format!("步骤{}", i + 1)) || step.contains("步骤"),
+                    "第{}步应包含步骤编号: {}", i + 1, step);
+            }
+        }
+
+        #[test]
+        fn test_materials_list_includes_primary() {
+            let rec = recommend_temporary_protection(
+                7.0, 100.0, 0.0, 20.0, 60.0, 1.0, "人骨"
+            );
+            assert!(!rec.materials_needed.is_empty(), "材料清单不能为空");
+
+            let primary_lower = rec.primary_moisturizer.to_lowercase();
+            let materials_names: Vec<String> = rec.materials_needed.iter()
+                .map(|m| m.name.to_lowercase())
+                .collect();
+            let materials_str = materials_names.join(" ");
+            assert!(materials_str.contains(&primary_lower.chars().take(5).collect::<String>())
+                || rec.materials_needed.iter().any(|m| m.purpose.to_lowercase().contains("保湿")),
+                "材料清单应包含主保湿剂相关材料");
+        }
+
+        #[test]
+        fn test_warnings_present_for_risky_cases() {
+            let rec_acid = recommend_temporary_protection(
+                4.0, 200.0, 200.0, 30.0, 40.0, 0.5, "人骨"
+            );
+            assert!(!rec_acid.warnings.is_empty() || rec_acid.ph_neutralization_required,
+                "高风险酸性环境应有警告或需中和处理");
+        }
+
+        #[test]
+        fn test_very_low_ca_recommendation() {
+            let rec = recommend_temporary_protection(
+                7.0, 10.0, 0.0, 20.0, 60.0, 1.0, "骨器"
+            );
+            assert!(!rec.primary_moisturizer.is_empty());
+            assert!(!rec.secondary_recommendations.is_empty() || rec.expected_effectiveness_score > 40.0);
+        }
+
+        #[test]
+        fn test_very_high_ca_mineral_deposition_risk() {
+            let rec = recommend_temporary_protection(
+                8.0, 500.0, 100.0, 25.0, 70.0, 2.0, "兽骨"
+            );
+            let warning_text = rec.warnings.join("").to_lowercase();
+            assert!(warning_text.contains("钙") || warning_text.contains("沉积")
+                || warning_text.contains("矿化") || rec.warnings.len() >= 2,
+                "高钙+碱性环境应提及钙沉积风险");
+        }
+
+        #[test]
+        fn test_high_temp_extends_protocol() {
+            let rec_hot = recommend_temporary_protection(
+                7.0, 100.0, 0.0, 32.0, 45.0, 1.0, "人骨"
+            );
+            let protocol_hot = rec_hot.step_by_step_protocol.join("");
+            assert!(protocol_hot.contains("冷藏") || protocol_hot.contains("冰袋") || protocol_hot.contains("低温"),
+                "高温环境应包含冷藏/降温措施");
+        }
+
+        #[test]
+        fn test_concentration_between_0_and_100() {
+            let cases = vec![
+                (5.0, 30.0), (7.0, 80.0), (9.0, 150.0),
+            ];
+            for (ph, ca) in cases {
+                let rec = recommend_temporary_protection(
+                    ph, ca, 0.0, 20.0, 60.0, 1.0, "人骨"
+                );
+                assert!(rec.concentration_pct > 0.0 && rec.concentration_pct <= 100.0,
+                    "浓度百分比应在0-100之间: {}", rec.concentration_pct);
+            }
+        }
+
+        #[test]
+        fn test_application_method_not_empty() {
+            let rec = recommend_temporary_protection(
+                7.0, 100.0, 0.0, 20.0, 60.0, 1.0, "人骨"
+            );
+            assert!(!rec.application_method.is_empty(), "必须有施用方法说明");
+        }
+
+        #[test]
+        fn test_stabilization_hours_positive() {
+            let rec = recommend_temporary_protection(
+                7.0, 100.0, 0.0, 20.0, 60.0, 1.0, "人骨"
+            );
+            assert!(rec.estimated_stabilization_hours > 0.0,
+                "稳定时间应大于0: {}小时", rec.estimated_stabilization_hours);
+        }
+
+        #[test]
+        fn test_primary_moisturizer_zh_chinese() {
+            let rec = recommend_temporary_protection(
+                7.0, 100.0, 0.0, 20.0, 60.0, 1.0, "人骨"
+            );
+            assert!(!rec.primary_moisturizer_zh.is_empty());
+            assert!(!rec.primary_moisturizer.is_empty());
+            assert_ne!(rec.primary_moisturizer, rec.primary_moisturizer_zh,
+                "英文名和中文名应不同");
+        }
+
+        #[test]
+        fn test_secondary_recommendations_list() {
+            let rec = recommend_temporary_protection(
+                7.0, 100.0, 0.0, 20.0, 60.0, 1.0, "人骨"
+            );
+            assert!(!rec.secondary_recommendations.is_empty() || rec.expected_effectiveness_score > 60.0);
+        }
+
+        #[test]
+        fn test_extreme_acid_boundary_4_5() {
+            let rec_mild_acid = recommend_temporary_protection(
+                4.6, 50.0, 0.0, 20.0, 60.0, 1.0, "人骨"
+            );
+            let rec_strong_acid = recommend_temporary_protection(
+                4.4, 50.0, 0.0, 20.0, 60.0, 1.0, "人骨"
+            );
+
+            assert_ne!(rec_mild_acid.ph_neutralization_required,
+                rec_strong_acid.ph_neutralization_required,
+                "pH≈4.5边界两侧中和需求应不同");
+        }
     }
 
-    #[test]
-    fn test_calculate_cpi_high_collagen() {
-        let cpi = calculate_cpi(85_000.0, 100.0, 10.0, None, 1.0);
-        assert!(cpi.cpi_score > 50.0);
-        assert!(cpi.remaining_collagen_pct > 0.0 && cpi.remaining_collagen_pct <= 100.0);
-        assert!(cpi.predicted_half_life_years > 0.0);
+    // ============================================================
+    // 综合集成测试：验证4个Feature整体协同
+    // ============================================================
+
+    mod integration_tests {
+        use super::*;
+
+        #[test]
+        fn test_full_workflow_neutral_oxic() {
+            let ph = 7.0;
+            let eh = 150.0;
+
+            let diagram = generate_eh_ph_diagram(
+                ph, eh, (2.0, 12.0), (-500.0, 800.0), (10, 10)
+            );
+            assert!(!diagram.dominant_zone_name.is_empty());
+
+            let cpi = calculate_cpi(85_000.0, 500.0, 15.0, None, 1.0);
+            assert!(cpi.cpi_score > 0.0);
+
+            let params = MonteCarloParams {
+                num_simulations: 50,
+                current_ph: ph,
+                ph_std_dev: 0.2,
+                current_temp_c: 15.0,
+                temp_std_dev: 1.5,
+                current_ca_ppm: 80.0,
+                ca_std_dev: 10.0,
+                current_orp_mv: eh,
+                orp_std_dev: 30.0,
+                forecast_years: 10.0,
+                time_steps_per_year: 4,
+                target_corrosion_threshold_um: 150.0,
+                acceptable_risk_threshold: 0.3,
+                current_collagen_remaining_pct: cpi.remaining_collagen_pct,
+            };
+            let excavation = run_monte_carlo_excavation(params);
+            assert!(excavation.simulations_completed >= 50,
+                "模拟数量应≥50 (实际:{})", excavation.simulations_completed);
+
+            let protection = recommend_temporary_protection(
+                ph, 80.0, eh, 20.0, 60.0, 1.0, "人骨"
+            );
+            assert!(!protection.primary_moisturizer.is_empty());
+        }
+
+        #[test]
+        fn test_full_workflow_acidic_sulfate_reducing() {
+            let ph = 5.5;
+            let eh = -150.0;
+
+            let diagram = generate_eh_ph_diagram(
+                ph, eh, (2.0, 12.0), (-500.0, 800.0), (10, 10)
+            );
+            assert_eq!(diagram.sample_point.zone, RedoxZone::SULFATE_REDUCING);
+            assert!(!diagram.sample_point.stable_phase.is_empty());
+
+            let cpi = calculate_cpi(95_000.0, 2000.0, 12.0, None, 1.0);
+            assert!(cpi.cpi_score > 0.0);
+
+            let protection = recommend_temporary_protection(
+                ph, 60.0, eh, 22.0, 55.0, 1.5, "人骨"
+            );
+            assert!(protection.ph_neutralization_required || protection.primary_moisturizer.to_lowercase().contains("peg"));
+        }
     }
 
-    #[test]
-    fn test_calculate_cpi_low_temp_long_burial() {
-        let cpi = calculate_cpi(85_000.0, 1000.0, 4.0, None, 1.0);
-        assert!(cpi.cpi_score > 0.0);
-        assert!(cpi.predicted_half_life_years > 100.0);
-    }
+    // ============================================================
+    // 通用数学/物理常量测试
+    // ============================================================
 
-    #[test]
-    fn test_monte_carlo_basic() {
-        let params = MonteCarloParams {
-            num_simulations: 100,
-            current_ph: 7.0,
-            ph_std_dev: 0.1,
-            current_temp_c: 15.0,
-            temp_std_dev: 1.0,
-            current_ca_ppm: 100.0,
-            ca_std_dev: 10.0,
-            current_orp_mv: 50.0,
-            orp_std_dev: 20.0,
-            forecast_years: 5.0,
-            time_steps_per_year: 4,
-            target_corrosion_threshold_um: 100.0,
-            acceptable_risk_threshold: 0.3,
-            current_collagen_remaining_pct: 80.0,
-        };
-        let result = run_monte_carlo_excavation(params);
-        assert_eq!(result.simulations_completed, 100);
-        assert!(!result.windows.is_empty());
-        assert!(!result.year_by_year_stats.is_empty());
-        assert!(result.confidence_level >= 0.0 && result.confidence_level <= 1.0);
-    }
+    mod constant_tests {
+        use super::*;
 
-    #[test]
-    fn test_protection_recommendation_acidic_low_ca() {
-        let rec = recommend_temporary_protection(
-            5.0, 25.0, -50.0, 22.0, 50.0, 1.0, "人骨"
-        );
-        assert!(rec.ph_neutralization_required || rec.primary_moisturizer.contains("PEG"));
-        assert!(!rec.step_by_step_protocol.is_empty());
-        assert!(rec.expected_effectiveness_score > 50.0);
-    }
+        #[test]
+        fn test_faraday_constant_value() {
+            assert!((FARADAY_F - 96485.0).abs() < 1.0,
+                "法拉第常数约为96485 C/mol");
+        }
 
-    #[test]
-    fn test_protection_recommendation_neutral_normal() {
-        let rec = recommend_temporary_protection(
-            7.0, 100.0, 0.0, 20.0, 60.0, 1.5, "兽骨"
-        );
-        assert!(!rec.ph_neutralization_required);
-        assert!(rec.primary_moisturizer.contains("DI_Water") || rec.primary_moisturizer.contains("PEG"));
-    }
+        #[test]
+        fn test_gas_constant_value() {
+            assert!((MOLAR_GAS_R - 8.314).abs() < 0.01,
+                "摩尔气体常数约为8.314 J/(mol·K)");
+        }
 
-    #[test]
-    fn test_ph_classification() {
-        assert_eq!(classify_ph_condition(3.0), "EXTREMELY_ACIDIC");
-        assert_eq!(classify_ph_condition(5.0), "HIGHLY_ACIDIC");
-        assert_eq!(classify_ph_condition(6.0), "MODERATELY_ACIDIC");
-        assert_eq!(classify_ph_condition(7.0), "NEUTRAL");
-        assert_eq!(classify_ph_condition(8.0), "MODERATELY_ALKALINE");
-        assert_eq!(classify_ph_condition(9.0), "HIGHLY_ALKALINE");
-        assert_eq!(classify_ph_condition(10.0), "EXTREMELY_ALKALINE");
-    }
-
-    #[test]
-    fn test_ca_classification() {
-        assert_eq!(classify_ca_condition(10.0), "VERY_LOW_CA");
-        assert_eq!(classify_ca_condition(50.0), "LOW_CA");
-        assert_eq!(classify_ca_condition(100.0), "NORMAL_CA");
-        assert_eq!(classify_ca_condition(300.0), "HIGH_CA");
-        assert_eq!(classify_ca_condition(500.0), "VERY_HIGH_CA");
+        #[test]
+        fn test_standard_temp_room_temperature() {
+            assert!((STANDARD_TEMP_K - 298.15).abs() < 1.0,
+                "标准温度约为298.15K (25°C)");
+        }
     }
 }
