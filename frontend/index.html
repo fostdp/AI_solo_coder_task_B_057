@@ -33,6 +33,10 @@
         <div class="tab" data-tab="contour">埋藏界面等高线</div>
         <div class="tab" data-tab="grid">环境栅格</div>
         <div class="tab" data-tab="analysis">腐蚀动力学分析</div>
+        <div class="tab" data-tab="ehph">Eh-pH氧化还原分带</div>
+        <div class="tab" data-tab="cpi">胶原保存潜力指数</div>
+        <div class="tab" data-tab="excavation">出土时机优化</div>
+        <div class="tab" data-tab="protection">现场保护方案</div>
         <div class="tab" data-tab="alerts">告警管理</div>
         <div class="tab" data-tab="sensors">传感器管理</div>
     </nav>
@@ -274,6 +278,242 @@
                 </table>
             </div>
         </section>
+
+        <section class="tab-panel" id="panel-ehph">
+            <div class="grid-2-unequal">
+                <div class="panel">
+                    <div class="panel-header">
+                        <h3>🗺 Fe-S-C体系Eh-pH稳定相图 (Pourbaix Diagram)</h3>
+                        <div class="panel-actions">
+                            <button id="btn-calc-ehph" class="mini-btn primary">▶ 计算相图</button>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <label>现场pH值<input type="number" id="ehph-inp-ph" min="2" max="12" step="0.1" value="6.8"/><span>pH</span></label>
+                        <label>现场Eh (mV)<input type="number" id="ehph-inp-eh" min="-500" max="800" step="1" value="120"/><span>mV</span></label>
+                        <label>pH范围<input type="text" id="ehph-ph-range" value="2-12" readonly/></label>
+                        <label>Eh范围<input type="text" id="ehph-eh-range" value="-500 ~ 800" readonly/></label>
+                    </div>
+                    <canvas id="ehph-canvas" width="720" height="560" class="contour-canvas"></canvas>
+                    <div class="colorbar-wrap">
+                        <div class="colorbar" id="ehph-colorbar" style="background: linear-gradient(to right,
+                            #8B0000, #FF4500, #FFA500, #FFD700, #9ACD32, #00FA9A, #00CED1, #1E90FF, #4169E1, #483D8B);"></div>
+                        <div class="colorbar-labels">
+                            <span>氧化带</span><span>含氧带</span><span>Mn还原</span><span>Fe还原</span>
+                            <span>SO₄²⁻还原</span><span>产甲烷</span><span>碳酸盐</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="panel small">
+                    <div class="panel-header"><h3>📋 分带识别结果</h3></div>
+                    <div class="detail-block">
+                        <div class="detail-row"><span class="d-label">采样点坐标</span><span class="d-val" id="ehph-sample">--</span></div>
+                        <div class="detail-row"><span class="d-label">主分带</span><span class="d-val badge-risk LOW" id="ehph-zone">--</span></div>
+                        <div class="detail-row"><span class="d-label">稳定矿物相</span><span class="d-val" id="ehph-phase">--</span></div>
+                        <div class="detail-row"><span class="d-label">保存质量</span><span class="d-val" id="ehph-quality">--</span></div>
+                        <div class="detail-row"><span class="d-label">腐蚀风险</span><span class="d-val badge-risk LOW" id="ehph-risk">--</span></div>
+                        <hr/>
+                        <h4 class="sub-header">⚖ 热力学相边界 (25°C)</h4>
+                        <div id="ehph-boundaries" class="boundary-list">
+                            <div class="empty-state">点击"计算相图"加载数据</div>
+                        </div>
+                        <hr/>
+                        <h4 class="sub-header">💡 考古学解释</h4>
+                        <ul class="note-list" id="ehph-interp">
+                            <li>铁还原带（Fe-Reducing）是骨胶原保存的最佳环境，微生物活性低且羟磷灰石稳定</li>
+                            <li>硫酸盐还原带可形成黄铁矿包膜，物理保护骨骼结构，但硫化物氧化后产生硫酸</li>
+                            <li>氧化带中有机成分降解迅速，骨胶原半衰期缩短至数百年级</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="tab-panel" id="panel-cpi">
+            <div class="grid-2">
+                <div class="panel">
+                    <div class="panel-header">
+                        <h3>🧬 骨胶原保存潜力指数 (Collagen Preservation Index)</h3>
+                        <div class="panel-actions">
+                            <button id="btn-calc-cpi" class="mini-btn primary">▶ 计算CPI指数</button>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <label>埋藏年代<input type="number" id="cpi-years" min="10" max="100000" step="10" value="1500"/><span>年</span></label>
+                        <label>当前埋藏温度<input type="number" id="cpi-temp" min="-10" max="40" step="0.1" value="12"/><span>℃</span></label>
+                        <label>活化能 Ea<input type="number" id="cpi-ea" min="60" max="120" step="1" value="85"/><span>kJ/mol</span></label>
+                        <label>初始胶原比例<input type="number" id="cpi-init" min="0.1" max="1" step="0.05" value="1"/><span>(归一化)</span></label>
+                    </div>
+                    <canvas id="cpi-chart" height="300"></canvas>
+                </div>
+                <div class="panel">
+                    <div class="panel-header"><h3>📊 CPI评估结果</h3></div>
+                    <div class="stat-row">
+                        <div class="stat-card large">
+                            <div class="stat-icon">🏆</div>
+                            <div class="stat-info">
+                                <div class="label">CPI综合得分</div>
+                                <div class="value" id="cpi-score">--</div>
+                                <div class="trend" id="cpi-grade">--</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="result-row">
+                        <div class="result-box"><div class="r-label">20℃等效埋藏</div><div class="r-value" id="cpi-eq-yrs">--</div><div class="r-unit">年</div></div>
+                        <div class="result-box"><div class="r-label">剩余胶原</div><div class="r-value" id="cpi-remaining">--</div><div class="r-unit">%</div></div>
+                        <div class="result-box"><div class="r-label">当前半衰期</div><div class="r-value" id="cpi-hl">--</div><div class="r-unit">年</div></div>
+                        <div class="result-box"><div class="r-label">20℃参考半衰期</div><div class="r-value" id="cpi-hl-ref">--</div><div class="r-unit">年</div></div>
+                        <div class="result-box"><div class="r-label">平均埋藏温度</div><div class="r-value" id="cpi-avg-t">--</div><div class="r-unit">℃</div></div>
+                    </div>
+                    <hr/>
+                    <h4 class="sub-header">📖 专家解读</h4>
+                    <div class="interpretation-box" id="cpi-interp" style="padding:12px;background:#f8f9fa;border-left:4px solid #17a2b8;border-radius:4px;">
+                        请输入参数后点击"计算CPI指数"
+                    </div>
+                    <hr/>
+                    <h4 class="sub-header">📜 温度史输入 (可选)</h4>
+                    <table class="alert-table" style="font-size:12px;">
+                        <thead><tr><th>距今年代</th><th>年均温度 (℃)</th><th>操作</th></tr></thead>
+                        <tbody id="cpi-temp-history">
+                            <tr><td><input type="number" class="mini-input" value="1500" step="100"/></td>
+                                <td><input type="number" class="mini-input" value="8" step="0.5"/></td>
+                                <td><button class="mini-btn" onclick="this.closest('tr').remove()">删除</button></td></tr>
+                            <tr><td><input type="number" class="mini-input" value="750" step="100"/></td>
+                                <td><input type="number" class="mini-input" value="10" step="0.5"/></td>
+                                <td><button class="mini-btn" onclick="this.closest('tr').remove()">删除</button></td></tr>
+                            <tr><td><input type="number" class="mini-input" value="0" step="100"/></td>
+                                <td><input type="number" class="mini-input" value="12" step="0.5"/></td>
+                                <td><button class="mini-btn" onclick="this.closest('tr').remove()">删除</button></td></tr>
+                        </tbody>
+                    </table>
+                    <button class="mini-btn" onclick="addTempHistoryRow()" style="margin-top:8px;">+ 添加温度记录</button>
+                </div>
+            </div>
+        </section>
+
+        <section class="tab-panel" id="panel-excavation">
+            <div class="grid-2-unequal">
+                <div class="panel">
+                    <div class="panel-header">
+                        <h3>🎲 出土时机蒙特卡洛优化 (Monte Carlo Simulation)</h3>
+                        <div class="panel-actions">
+                            <button id="btn-calc-excav" class="mini-btn primary">▶ 运行模拟</button>
+                            <label>模拟次数:
+                                <select id="excv-sims" class="mini-select">
+                                    <option value="500">500次 (快速)</option>
+                                    <option value="2000" selected>2000次 (推荐)</option>
+                                    <option value="5000">5000次 (高精度)</option>
+                                </select>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <label>当前pH<input type="number" id="excv-ph" min="3" max="11" step="0.1" value="6.8"/></label>
+                        <label>pH波动σ<input type="number" id="excv-phsd" min="0.01" max="2" step="0.05" value="0.3"/></label>
+                        <label>当前温度℃<input type="number" id="excv-t" min="0" max="35" step="0.5" value="15"/></label>
+                        <label>温度波动σ<input type="number" id="excv-tsd" min="0.1" max="10" step="0.1" value="2"/></label>
+                        <label>Ca²⁺ ppm<input type="number" id="excv-ca" min="10" max="500" step="5" value="85"/></label>
+                        <label>ORP mV<input type="number" id="excv-orp" min="-400" max="700" step="10" value="80"/></label>
+                        <label>腐蚀阈值μm<input type="number" id="excv-thr" min="50" max="500" step="10" value="200"/></label>
+                        <label>可接受风险<input type="number" id="excv-risk" min="0.05" max="0.6" step="0.01" value="0.25"/></label>
+                        <label>预测年限<input type="number" id="excv-years" min="2" max="100" step="1" value="20"/></label>
+                    </div>
+                    <canvas id="excv-chart" height="300"></canvas>
+                    <hr/>
+                    <canvas id="excv-dist-chart" height="180"></canvas>
+                </div>
+                <div class="panel small">
+                    <div class="panel-header"><h3>📋 模拟评估结果</h3></div>
+                    <div class="detail-block">
+                        <div class="detail-row"><span class="d-label">模拟完成</span><span class="d-val" id="excv-done">--</span></div>
+                        <div class="detail-row"><span class="d-label">结果置信度</span><span class="d-val" id="excv-conf">--</span></div>
+                        <hr/>
+                        <h4 class="sub-header">🏆 最佳发掘窗口</h4>
+                        <div class="result-box highlight" style="background:#fff3cd;border:2px solid #ffc107;padding:12px;border-radius:8px;">
+                            <div class="r-label">推荐时间段</div>
+                            <div class="r-value" id="excv-window" style="font-size:24px;">--</div>
+                            <div class="r-unit" id="excv-prob">成功概率: --</div>
+                        </div>
+                        <hr/>
+                        <h4 class="sub-header">📊 多窗口对比</h4>
+                        <div id="excv-windows" class="window-list">
+                            <div class="empty-state">运行模拟后显示</div>
+                        </div>
+                        <hr/>
+                        <h4 class="sub-header">🎯 最终建议</h4>
+                        <div class="interpretation-box" id="excv-rec" style="padding:12px;background:#f0f8ff;border-left:4px solid #007bff;border-radius:4px;">
+                            设置参数后运行蒙特卡洛模拟
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section class="tab-panel" id="panel-protection">
+            <div class="grid-2-unequal">
+                <div class="panel">
+                    <div class="panel-header">
+                        <h3>🧪 现场临时保护方案决策推荐 (Decision Tree)</h3>
+                        <div class="panel-actions">
+                            <button id="btn-calc-prot" class="mini-btn primary">▶ 生成方案</button>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <label>出土环境pH<input type="number" id="prot-ph" min="2" max="12" step="0.1" value="6.5"/></label>
+                        <label>Ca²⁺浓度<input type="number" id="prot-ca" min="0" max="1000" step="1" value="60"/><span>ppm</span></label>
+                        <label>ORP<input type="number" id="prot-orp" min="-400" max="700" step="1" value="-20"/><span>mV</span></label>
+                        <label>现场气温<input type="number" id="prot-temp" min="-5" max="45" step="1" value="24"/><span>℃</span></label>
+                        <label>现场湿度<input type="number" id="prot-rh" min="10" max="100" step="1" value="45"/><span>%RH</span></label>
+                        <label>埋藏深度<input type="number" id="prot-depth" min="0.1" max="10" step="0.1" value="1.2"/><span>m</span></label>
+                        <label>文物类别
+                            <select id="prot-category" class="mini-select">
+                                <option value="人骨">人骨</option>
+                                <option value="兽骨">兽骨</option>
+                                <option value="鹿角">鹿角/角质</option>
+                                <option value="牙釉质">牙齿/牙釉质</option>
+                                <option value="卜甲">龟甲/卜甲</option>
+                            </select>
+                        </label>
+                    </div>
+                    <hr/>
+                    <h4 class="sub-header">🌳 决策路径追踪</h4>
+                    <div id="prot-decision-path" class="decision-path">
+                        <div class="empty-state">点击"生成方案"显示决策树路径</div>
+                    </div>
+                </div>
+                <div class="panel small">
+                    <div class="panel-header"><h3>📋 推荐方案</h3></div>
+                    <div class="detail-block">
+                        <div class="detail-row"><span class="d-label">主保湿剂</span><span class="d-val" id="prot-main">--</span></div>
+                        <div class="detail-row"><span class="d-label">浓度</span><span class="d-val" id="prot-conc">--</span></div>
+                        <div class="detail-row"><span class="d-label">施用方法</span><span class="d-val" id="prot-method" style="font-size:12px;">--</span></div>
+                        <div class="detail-row"><span class="d-label">效果评分</span><span class="d-val badge-risk LOW" id="prot-score">--</span></div>
+                        <div class="detail-row"><span class="d-label">pH中和需求</span><span class="d-val" id="prot-neutralize">--</span></div>
+                        <div class="detail-row"><span class="d-label">预计稳定时间</span><span class="d-val" id="prot-stab">--</span></div>
+                        <hr/>
+                        <h4 class="sub-header">⚠ 注意事项</h4>
+                        <div id="prot-warnings" class="warning-list">
+                            <div class="empty-state">暂无</div>
+                        </div>
+                        <hr/>
+                        <h4 class="sub-header">📦 所需材料清单</h4>
+                        <div id="prot-materials" class="materials-list">
+                            <div class="empty-state">生成方案后显示</div>
+                        </div>
+                        <hr/>
+                        <h4 class="sub-header">📝 分步操作流程</h4>
+                        <ol id="prot-protocol" class="protocol-list">
+                            <li class="empty-state">生成方案后显示详细步骤</li>
+                        </ol>
+                        <hr/>
+                        <h4 class="sub-header">🔬 辅助措施</h4>
+                        <div id="prot-secondary" class="secondary-list">
+                            <div class="empty-state">根据环境条件自动推荐</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
     </main>
 
     <footer class="footer">
@@ -287,6 +527,7 @@
     <script src="js/contour.js"></script>
     <script src="js/CorrosionDepth.js"></script>
     <script src="js/BoneCloud.js"></script>
+    <script src="js/heritage_features.js"></script>
     <script src="js/main.js"></script>
 </body>
 </html>
